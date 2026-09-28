@@ -1,0 +1,33 @@
+# Virtual environment & Python cache
+.venv/
+__pycache__/
+*.py[cod]
+*$py.class
+*.env
+
+# Datasets, Satellite files & Containers
+data/
+*.h5
+*.hdf5
+*.nc
+*.grib2
+*.tif
+*.tiff
+
+# AI Models (prevent pushing huge weights)
+*.pt
+*.onnx
+runs/
+dataset/
+
+# Next.js & Node (Frontend)
+frontend/.next/
+frontend/out/
+frontend/node_modules/
+frontend/.npm
+*.log
+
+# Editor & OS files
+.vscode/
+.DS_Store
+Thumbs.db
