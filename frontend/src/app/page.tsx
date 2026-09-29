@@ -2,8 +2,8 @@ import CycloneMap from "@/components/CycloneMap";
 
 export default function Home() {
   return (
-    <main className="w-full h-screen overflow-hidden">
+    <div className="w-full h-full relative overflow-hidden">
       <CycloneMap />
-    </main>
+    </div>
   );
 }

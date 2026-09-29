@@ -166,23 +166,10 @@ export default function ValidationPage() {
   }, [activeTab, liveComparison]);
 
   return (
-    <div className="min-h-screen bg-slate-900 text-slate-100 font-sans p-6 md:p-8">
+    <div className="h-full w-full overflow-y-auto bg-slate-900 text-slate-100 font-sans p-4 md:p-6 pb-12">
       <div className="max-w-6xl mx-auto space-y-6">
         {/* Navigation & Tab Selector */}
         <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 pb-6 border-b border-slate-800">
-          <div className="flex items-center gap-4">
-            <Link
-              href="/"
-              className="flex items-center gap-2 text-sm text-blue-400 hover:text-blue-300 font-medium"
-            >
-              <ArrowLeft className="w-4 h-4" /> Live Map
-            </Link>
-            <div className="h-4 w-px bg-slate-700" />
-            <span className="text-xs font-mono bg-blue-500/20 text-blue-300 px-3 py-1 rounded-full border border-blue-500/30">
-              AI vs NWP BENCHMARK
-            </span>
-          </div>
-
           {/* Mode Switcher */}
           <div className="flex items-center bg-slate-800 p-1 rounded-xl border border-slate-700 text-xs font-semibold">
             <button
@@ -239,7 +226,7 @@ export default function ValidationPage() {
             </div>
 
             {/* Interactive Ensemble Map */}
-            <div className="relative w-full h-[460px] rounded-2xl overflow-hidden border border-slate-700/80 shadow-2xl">
+            <div className="relative w-full h-[380px] rounded-2xl overflow-hidden border border-slate-700/80 shadow-2xl">
               <div ref={mapContainer} className="w-full h-full" />
             </div>
 

@@ -2,6 +2,7 @@
 
 import React, { useEffect, useRef, useState } from "react";
 import Link from "next/link";
+import Navbar from "@/components/Navbar";
 import {
   Compass,
   Wind,
@@ -300,7 +301,7 @@ export default function HistoricalPage() {
   }, [stormDetails]);
 
   return (
-    <div className="flex h-screen w-full bg-slate-100 font-sans overflow-hidden">
+    <div className="flex h-full w-full bg-slate-100 font-sans overflow-hidden">
       {/* LEFT SIDEBAR: Cyclone Selection & Catalog */}
       <aside className="w-96 flex flex-col bg-white border-r border-slate-200 z-10 shadow-md">
         {/* Navigation Bar */}

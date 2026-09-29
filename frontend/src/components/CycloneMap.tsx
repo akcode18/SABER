@@ -4,7 +4,6 @@ import React, { useEffect, useRef, useState } from "react";
 import {
   Compass,
   Wind,
-  ShieldAlert,
   AlertCircle,
   ChevronDown,
   ChevronUp,
@@ -67,7 +66,6 @@ export default function CycloneMap() {
 
   const [activeLayer, setActiveLayer] = useState<EnvironmentalLayer>("NONE");
   const [probeData, setProbeData] = useState<ProbeResult | null>(null);
-  const [isLoadingProbe, setIsLoadingProbe] = useState(false);
 
   // States to toggle visibility / minimization
   const [showTelemetry, setShowTelemetry] = useState(true);
@@ -75,22 +73,22 @@ export default function CycloneMap() {
   const [showLandfall, setShowLandfall] = useState(true);
   const [showProbe, setShowProbe] = useState(true);
 
-  // Dynamic Draggable Positions { x, y }
-  const [posTelemetry, setPosTelemetry] = useState({ x: 24, y: 70 });
-  const [posSurveillance, setPosSurveillance] = useState({ x: 1040, y: 70 });
-  const [posLandfall, setPosLandfall] = useState({ x: 1040, y: 280 });
-  const [posProbe, setPosProbe] = useState({ x: 24, y: 370 });
+  // Dynamic Draggable Positions - initialized with small top margins (y: 16)
+  const [posTelemetry, setPosTelemetry] = useState({ x: 20, y: 16 });
+  const [posSurveillance, setPosSurveillance] = useState({ x: 1040, y: 16 });
+  const [posLandfall, setPosLandfall] = useState({ x: 1040, y: 220 });
+  const [posProbe, setPosProbe] = useState({ x: 20, y: 310 });
 
   // Initialize right-aligned panels dynamically on client mount
   useEffect(() => {
     if (typeof window !== "undefined") {
       const rightX = Math.max(20, window.innerWidth - 340);
-      setPosSurveillance({ x: rightX, y: 70 });
-      setPosLandfall({ x: rightX, y: 280 });
+      setPosSurveillance({ x: rightX, y: 16 });
+      setPosLandfall({ x: rightX, y: 220 });
     }
   }, []);
 
-  // Universal Drag Hook for Card Elements
+  // Universal Drag Hook - allows dragging right up to y = 12px (below top nav)
   const handleDragStart = (
     e: React.MouseEvent,
     currentPos: { x: number; y: number },
@@ -107,7 +105,8 @@ export default function CycloneMap() {
       const deltaY = moveEvent.clientY - startY;
       setPos({
         x: Math.max(10, Math.min(window.innerWidth - 80, initialX + deltaX)),
-        y: Math.max(60, Math.min(window.innerHeight - 60, initialY + deltaY)),
+        // Top boundary set to 12px so cards can reach right below the navbar
+        y: Math.max(12, Math.min(window.innerHeight - 150, initialY + deltaY)),
       });
     };
 
@@ -191,7 +190,7 @@ export default function CycloneMap() {
       mapRef.current = map;
 
       map.on("load", () => {
-        // Official Survey of India Sovereign Boundary Line
+        // Survey of India Sovereign Boundary Line
         map.addSource("india-official-boundary", {
           type: "geojson",
           data: "https://raw.githubusercontent.com/datameet/maps/master/Country/india-composite.geojson",
@@ -315,7 +314,6 @@ export default function CycloneMap() {
           }
 
           setShowProbe(true);
-          setIsLoadingProbe(true);
           try {
             const res = await fetch(
               `http://localhost:8000/api/v1/storms/surveillance/point-probe?lat=${lat.toFixed(3)}&lon=${lng.toFixed(3)}`
@@ -326,8 +324,6 @@ export default function CycloneMap() {
             }
           } catch (err) {
             console.error("Probe fetch error:", err);
-          } finally {
-            setIsLoadingProbe(false);
           }
         });
 
@@ -375,122 +371,12 @@ export default function CycloneMap() {
     };
   }, [stormData]);
 
-// 3. High-Contrast Surveillance Raster Layer Switcher
-  useEffect(() => {
-    const map = mapRef.current;
-    if (!map || !map.isStyleLoaded()) return;
-
-    const rasterSourceId = "realtime-env-raster-source";
-    const rasterLayerId = "realtime-env-raster-layer";
-
-    // Remove existing layer if present
-    if (map.getLayer(rasterLayerId)) {
-      map.removeLayer(rasterLayerId);
-    }
-    if (map.getSource(rasterSourceId)) {
-      map.removeSource(rasterSourceId);
-    }
-
-    if (activeLayer === "NONE") return;
-
-    // Distinct, visually distinct tile layers
-    let tileUrl = "";
-
-    if (activeLayer === "SST") {
-      // Sea Surface Temperature Thermal Gradient (Warm Coral / Red Thermal Heatmap)
-      tileUrl = "https://server.arcgisonline.com/ArcGIS/rest/services/Specialty/DeLorme_World_Base_Map/MapServer/tile/{z}/{y}/{x}";
-    } else if (activeLayer === "WARM_DEPTH") {
-      // Ocean Floor / Isothermal Heat Depth (Deep Oceanic Bathymetry & Ridge Blue/Amber)
-      tileUrl = "https://server.arcgisonline.com/ArcGIS/rest/services/Ocean/World_Ocean_Base/MapServer/tile/{z}/{y}/{x}";
-    } else if (activeLayer === "HUMIDITY") {
-      // Live Global Radar & Mid-Tropospheric Water Vapor (Vibrant Green/Blue Moisture Band)
-      tileUrl = "https://tilecache.rainviewer.com/v2/radar/nowcast_0/256/{z}/{x}/{y}/2/1_1.png";
-    } else if (activeLayer === "WIND_SHEAR") {
-      // Atmospheric Topography & Pressure Contours
-      tileUrl = "https://server.arcgisonline.com/ArcGIS/rest/services/World_Physical_Map/MapServer/tile/{z}/{y}/{x}";
-    }
-
-    if (tileUrl) {
-      try {
-        map.addSource(rasterSourceId, {
-          type: "raster",
-          tiles: [tileUrl],
-          tileSize: 256,
-          maxzoom: 12,
-        });
-
-        // Place on top of the base map, but beneath the storm track and cone
-        const targetBefore = map.getLayer("uncertainty-cone-fill")
-          ? "uncertainty-cone-fill"
-          : undefined;
-
-        map.addLayer(
-          {
-            id: rasterLayerId,
-            type: "raster",
-            source: rasterSourceId,
-            paint: {
-              "raster-opacity": activeLayer === "HUMIDITY" ? 0.85 : 0.60,
-              "raster-saturation": 0.4,
-              "raster-contrast": 0.3,
-            },
-          },
-          targetBefore
-        );
-      } catch (err) {
-        console.warn("Error attaching surveillance layer:", err);
-      }
-    }
-  }, [activeLayer]);
-
   const latestObs = stormData?.features?.find(
     (f: any) => f.properties?.layer_type === "observation"
   )?.properties as StormProperties;
 
   return (
-    <div className="relative w-full h-screen bg-slate-100 text-slate-800 font-sans overflow-hidden select-none">
-{/* Top Header */}
-      <header className="absolute top-0 left-0 right-0 z-20 flex items-center justify-between px-6 py-3.5 bg-white/90 backdrop-blur-md border-b border-slate-200 shadow-xs">
-        <div className="flex items-center space-x-3">
-          <div className="p-2 bg-blue-50 border border-blue-200 rounded-lg">
-            <ShieldAlert className="w-5 h-5 text-blue-600" />
-          </div>
-          <div>
-            <h1 className="text-base font-bold tracking-wide flex items-center gap-2 text-slate-900">
-              SABER <span className="text-[11px] px-2 py-0.5 rounded bg-blue-50 text-blue-700 border border-blue-200 font-semibold">OPERATIONAL</span>
-            </h1>
-            <p className="text-xs text-slate-500">North Indian Ocean Tropical Cyclone Monitoring</p>
-          </div>
-        </div>
-
-
-    <div className="flex items-center gap-2.5 text-sm">
-  <a
-    href="/live-cyclone"
-    className="px-3 py-1.5 rounded-lg bg-red-600 hover:bg-red-700 text-white text-xs font-bold shadow-xs transition flex items-center gap-1.5"
-  >
-    <span className="w-2 h-2 rounded-full bg-white animate-pulse" />
-    Cyclone ARNAB Live
-  </a>
-  <a
-    href="/historical"
-    className="px-3 py-1.5 rounded-lg bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-semibold border border-slate-200 transition"
-  >
-    Historical Catalog
-  </a>
-  <a
-    href="/validation"
-    className="px-3 py-1.5 rounded-lg bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-semibold border border-slate-200 transition"
-  >
-    Validation Metrics
-  </a>
-   <div className="flex items-center gap-2 text-slate-600 font-medium text-xs border-l border-slate-200 pl-3">
-          <span className="w-2.5 h-2.5 rounded-full bg-emerald-500 animate-pulse" />
-          <span>FastAPI Online</span>
-       </div>
-</div>
-      </header>
-
+    <div className="relative w-full h-full bg-slate-100 text-slate-800 font-sans overflow-hidden select-none">
       {/* 1. Active System Telemetry Panel (Draggable & Collapsible) */}
       {latestObs && (
         <div
@@ -499,7 +385,6 @@ export default function CycloneMap() {
         >
           {showTelemetry ? (
             <div className="w-80 p-4 bg-white/95 backdrop-blur-md rounded-xl border border-slate-200 shadow-xl">
-              {/* Drag Handle Bar */}
               <div
                 onMouseDown={(e) => handleDragStart(e, posTelemetry, setPosTelemetry)}
                 className="flex items-center justify-between border-b border-slate-100 pb-2.5 mb-3 cursor-grab active:cursor-grabbing hover:bg-slate-50/70 -mx-2 px-2 rounded-t-lg transition"
@@ -681,7 +566,7 @@ export default function CycloneMap() {
         className="absolute top-0 left-0 z-20 transition-transform duration-75 ease-out"
       >
         {showLandfall ? (
-          <div className="w-80 max-h-[46vh] flex flex-col p-4 bg-white/95 backdrop-blur-md rounded-xl border border-slate-200 shadow-xl">
+          <div className="w-80 max-h-[42vh] flex flex-col p-4 bg-white/95 backdrop-blur-md rounded-xl border border-slate-200 shadow-xl">
             <div
               onMouseDown={(e) => handleDragStart(e, posLandfall, setPosLandfall)}
               className="flex items-center justify-between border-b border-slate-100 pb-2 mb-2.5 cursor-grab active:cursor-grabbing hover:bg-slate-50/70 -mx-1 px-1 py-0.5 rounded transition"
@@ -865,7 +750,7 @@ export default function CycloneMap() {
       )}
 
       {/* Floating Legend (Bottom Center) */}
-      <div className="absolute bottom-6 left-1/2 -translate-x-1/2 z-20 bg-white/95 backdrop-blur-md px-6 py-2.5 rounded-2xl shadow-xl border border-slate-200/90 flex items-center gap-8 text-slate-700">
+      <div className="absolute bottom-5 left-1/2 -translate-x-1/2 z-20 bg-white/95 backdrop-blur-md px-6 py-2 rounded-2xl shadow-xl border border-slate-200/90 flex items-center gap-8 text-slate-700">
         <div className="flex flex-col items-center gap-1">
           <span className="text-[10px] font-semibold text-slate-500 uppercase tracking-wider">Convective Area</span>
           <div className="flex items-center gap-0.5">
@@ -905,7 +790,7 @@ export default function CycloneMap() {
           </div>
         </div>
       ) : (
-        <div ref={mapContainer} className="w-full h-full" />
+        <div ref={mapContainer} style={{ width: "100%", height: "100%", position: "absolute", top: 0, left: 0 }} />
       )}
     </div>
   );
