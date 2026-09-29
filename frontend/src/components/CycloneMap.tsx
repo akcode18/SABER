@@ -1,7 +1,19 @@
 "use client";
 
 import React, { useEffect, useRef, useState } from "react";
-import { Compass, Wind, ShieldAlert, AlertCircle, Waves, Clock } from "lucide-react";
+import {
+  Compass,
+  Wind,
+  ShieldAlert,
+  AlertCircle,
+  ChevronDown,
+  ChevronUp,
+  Layers,
+  Activity,
+  MapPin,
+  X,
+  GripHorizontal,
+} from "lucide-react";
 
 interface StormProperties {
   vmax_knots?: number;
@@ -22,11 +34,91 @@ interface DistrictAlert {
   action_required: string;
 }
 
+type EnvironmentalLayer = "NONE" | "SST" | "WARM_DEPTH" | "HUMIDITY" | "WIND_SHEAR";
+
+interface ProbeResult {
+  coordinates: { lat: number; lon: number };
+  basin: string;
+  parameters: {
+    sst_celsius: number;
+    warm_water_depth_m: number;
+    relative_humidity_700_500_pct: number;
+    vertical_wind_shear_kt: number;
+    low_level_vorticity_10e5_s: number;
+  };
+  genesis_trigger_score: string;
+  cyclogenesis_risk: "LOW" | "MODERATE" | "HIGH";
+  favorable_conditions: {
+    thermal_forcing: string;
+    upper_ocean_heat: string;
+    shear_environment: string;
+    moisture_inflow: string;
+  };
+}
+
 export default function CycloneMap() {
   const mapContainer = useRef<HTMLDivElement>(null);
+  const mapRef = useRef<any>(null);
+  const probeMarker = useRef<any>(null);
+
   const [stormData, setStormData] = useState<any>(null);
   const [landfallData, setLandfallData] = useState<DistrictAlert[]>([]);
   const [loading, setLoading] = useState(true);
+
+  const [activeLayer, setActiveLayer] = useState<EnvironmentalLayer>("NONE");
+  const [probeData, setProbeData] = useState<ProbeResult | null>(null);
+  const [isLoadingProbe, setIsLoadingProbe] = useState(false);
+
+  // States to toggle visibility / minimization
+  const [showTelemetry, setShowTelemetry] = useState(true);
+  const [showSurveillance, setShowSurveillance] = useState(true);
+  const [showLandfall, setShowLandfall] = useState(true);
+  const [showProbe, setShowProbe] = useState(true);
+
+  // Dynamic Draggable Positions { x, y }
+  const [posTelemetry, setPosTelemetry] = useState({ x: 24, y: 70 });
+  const [posSurveillance, setPosSurveillance] = useState({ x: 1040, y: 70 });
+  const [posLandfall, setPosLandfall] = useState({ x: 1040, y: 280 });
+  const [posProbe, setPosProbe] = useState({ x: 24, y: 370 });
+
+  // Initialize right-aligned panels dynamically on client mount
+  useEffect(() => {
+    if (typeof window !== "undefined") {
+      const rightX = Math.max(20, window.innerWidth - 340);
+      setPosSurveillance({ x: rightX, y: 70 });
+      setPosLandfall({ x: rightX, y: 280 });
+    }
+  }, []);
+
+  // Universal Drag Hook for Card Elements
+  const handleDragStart = (
+    e: React.MouseEvent,
+    currentPos: { x: number; y: number },
+    setPos: React.Dispatch<React.SetStateAction<{ x: number; y: number }>>
+  ) => {
+    e.preventDefault();
+    const startX = e.clientX;
+    const startY = e.clientY;
+    const initialX = currentPos.x;
+    const initialY = currentPos.y;
+
+    const onMouseMove = (moveEvent: MouseEvent) => {
+      const deltaX = moveEvent.clientX - startX;
+      const deltaY = moveEvent.clientY - startY;
+      setPos({
+        x: Math.max(10, Math.min(window.innerWidth - 80, initialX + deltaX)),
+        y: Math.max(60, Math.min(window.innerHeight - 60, initialY + deltaY)),
+      });
+    };
+
+    const onMouseUp = () => {
+      window.removeEventListener("mousemove", onMouseMove);
+      window.removeEventListener("mouseup", onMouseUp);
+    };
+
+    window.addEventListener("mousemove", onMouseMove);
+    window.addEventListener("mouseup", onMouseUp);
+  };
 
   // 1. Fetch GeoJSON and Landfall Risk Concurrently
   useEffect(() => {
@@ -45,7 +137,7 @@ export default function CycloneMap() {
       });
   }, []);
 
-  // 2. Initialize MapLibre with Survey of India border and storm track
+  // 2. Initialize Google Maps Standard Base Layer
   useEffect(() => {
     if (!mapContainer.current || !stormData) return;
 
@@ -67,86 +159,128 @@ export default function CycloneMap() {
 
       const map = new maplibregl.Map({
         container: mapContainer.current,
-        style: "https://basemaps.cartocdn.com/gl/dark-matter-gl-style/style.json",
-        center: [82.0, 19.0],
-        zoom: 4.6,
+        style: {
+          version: 8,
+          sources: {
+            "google-maps-standard": {
+              type: "raster",
+              tiles: [
+                "https://mt0.google.com/vt/lyrs=m&hl=en&gl=IN&x={x}&y={y}&z={z}",
+                "https://mt1.google.com/vt/lyrs=m&hl=en&gl=IN&x={x}&y={y}&z={z}",
+                "https://mt2.google.com/vt/lyrs=m&hl=en&gl=IN&x={x}&y={y}&z={z}",
+                "https://mt3.google.com/vt/lyrs=m&hl=en&gl=IN&x={x}&y={y}&z={z}",
+              ],
+              tileSize: 256,
+              maxzoom: 20,
+            },
+          },
+          layers: [
+            {
+              id: "google-base-tiles",
+              type: "raster",
+              source: "google-maps-standard",
+              minzoom: 0,
+              maxzoom: 22,
+            },
+          ],
+        },
+        center: [83.0, 17.5],
+        zoom: 4.8,
       });
 
+      mapRef.current = map;
+
       map.on("load", () => {
-        // Survey of India sovereign border overlay
+        // Official Survey of India Sovereign Boundary Line
         map.addSource("india-official-boundary", {
           type: "geojson",
           data: "https://raw.githubusercontent.com/datameet/maps/master/Country/india-composite.geojson",
         });
 
         map.addLayer({
-          id: "india-official-fill",
-          type: "fill",
-          source: "india-official-boundary",
-          paint: { "fill-color": "#38bdf8", "fill-opacity": 0.03 },
-        });
-
-        map.addLayer({
           id: "india-official-border-line",
           type: "line",
           source: "india-official-boundary",
-          paint: { "line-color": "#38bdf8", "line-width": 1.6, "line-opacity": 0.9 },
+          paint: {
+            "line-color": "#e11d48",
+            "line-width": 1.6,
+            "line-opacity": 0.8,
+          },
         });
 
-        // Cyclone GeoJSON Source
+        // Cyclone GeoJSON Layers
         map.addSource("cyclone-source", { type: "geojson", data: stormData });
 
-        // Uncertainty Cone (Fill)
+        // Uncertainty Cone Fill
         map.addLayer({
           id: "uncertainty-cone-fill",
           type: "fill",
           source: "cyclone-source",
           filter: ["==", "layer_type", "cone_of_uncertainty"],
-          paint: { "fill-color": "#f59e0b", "fill-opacity": 0.25 },
+          paint: { "fill-color": "#f97316", "fill-opacity": 0.25 },
         });
 
-        // Uncertainty Cone (Border)
+        // Uncertainty Cone Border
         map.addLayer({
           id: "uncertainty-cone-line",
           type: "line",
           source: "cyclone-source",
           filter: ["==", "layer_type", "cone_of_uncertainty"],
-          paint: { "line-color": "#f59e0b", "line-width": 1.5, "line-dasharray": [3, 2] },
+          paint: { "line-color": "#ea580c", "line-width": 1.5, "line-dasharray": [3, 2] },
         });
 
-        // Forecast Line
+        // 120-Hour Forecast Trajectory Line
         map.addLayer({
           id: "trajectory-path",
           type: "line",
           source: "cyclone-source",
           filter: ["==", "layer_type", "forecast_track"],
-          paint: { "line-color": "#ef4444", "line-width": 3 },
+          paint: { "line-color": "#dc2626", "line-width": 3 },
         });
 
-        // Observation Points
+        // Observation Markers
         map.addLayer({
-          id: "storm-obs-glow",
-          type: "circle",
-          source: "cyclone-source",
-          filter: ["==", "layer_type", "observation"],
-          paint: { "circle-radius": 16, "circle-color": "#ef4444", "circle-opacity": 0.35 },
-        });
-
-        map.addLayer({
-          id: "storm-obs-point",
+          id: "bubble-marker-halo",
           type: "circle",
           source: "cyclone-source",
           filter: ["==", "layer_type", "observation"],
           paint: {
-            "circle-radius": 6,
-            "circle-color": "#ffffff",
-            "circle-stroke-width": 2,
-            "circle-stroke-color": "#ef4444",
+            "circle-radius": [
+              "interpolate", ["linear"], ["get", "vmax_knots"],
+              15, 12,
+              35, 18,
+              65, 26,
+              100, 36
+            ],
+            "circle-color": "#4285F4",
+            "circle-opacity": 0.35,
+            "circle-stroke-width": 1.5,
+            "circle-stroke-color": "#8ab4f8",
           },
         });
 
-        // Observation Tooltip
-        map.on("click", "storm-obs-point", (e: any) => {
+        map.addLayer({
+          id: "bubble-marker-core",
+          type: "circle",
+          source: "cyclone-source",
+          filter: ["==", "layer_type", "observation"],
+          paint: {
+            "circle-radius": [
+              "interpolate", ["linear"], ["get", "vmax_knots"],
+              15, 6,
+              35, 10,
+              65, 15,
+              100, 22
+            ],
+            "circle-color": "#1a73e8",
+            "circle-opacity": 0.95,
+            "circle-stroke-width": 2,
+            "circle-stroke-color": "#ffffff",
+          },
+        });
+
+        // Observation Click Tooltip
+        map.on("click", "bubble-marker-core", (e: any) => {
           if (!e.features || !e.features[0]) return;
           const coords = e.features[0].geometry.coordinates.slice();
           const props = e.features[0].properties;
@@ -154,20 +288,53 @@ export default function CycloneMap() {
           new maplibregl.Popup({ offset: 12 })
             .setLngLat(coords)
             .setHTML(
-              `<div style="color: #0f172a; font-family: ui-sans-serif, system-ui, sans-serif; font-size: 13px; line-height: 1.5; padding: 4px;">
-                <div style="font-weight: 700; color: #dc2626; margin-bottom: 2px;">${props.category || "Cyclone Observation"}</div>
+              `<div style="color: #0f172a; font-family: Roboto, Arial, sans-serif; font-size: 13px; line-height: 1.5; padding: 4px;">
+                <div style="font-weight: 700; color: #1a73e8; margin-bottom: 2px;">${props.category || "Observation Fix"}</div>
                 <div><strong>Wind Speed:</strong> ${props.vmax_knots} kt</div>
                 <div><strong>Central Pressure:</strong> ${props.mslp_hpa} hPa</div>
-                <div style="font-size: 11px; color: #64748b; margin-top: 4px;"><strong>Observed:</strong> ${new Date(props.timestamp).toUTCString()}</div>
+                <div style="font-size: 11px; color: #64748b; margin-top: 4px;"><strong>Recorded:</strong> ${new Date(props.timestamp).toUTCString()}</div>
               </div>`
             )
             .addTo(map);
         });
 
-        map.on("mouseenter", "storm-obs-point", () => {
+        // Ocean Surveillance Probe on Click
+        map.on("click", async (e: any) => {
+          const features = map.queryRenderedFeatures(e.point, { layers: ["bubble-marker-core"] });
+          if (features.length > 0) return;
+
+          const { lng, lat } = e.lngLat;
+          if (lat < 0 || lat > 30 || lng < 45 || lng > 105) return;
+
+          if (probeMarker.current) {
+            probeMarker.current.setLngLat([lng, lat]);
+          } else {
+            probeMarker.current = new maplibregl.Marker({ color: "#1a73e8" })
+              .setLngLat([lng, lat])
+              .addTo(map);
+          }
+
+          setShowProbe(true);
+          setIsLoadingProbe(true);
+          try {
+            const res = await fetch(
+              `http://localhost:8000/api/v1/storms/surveillance/point-probe?lat=${lat.toFixed(3)}&lon=${lng.toFixed(3)}`
+            );
+            if (res.ok) {
+              const data = await res.json();
+              setProbeData(data);
+            }
+          } catch (err) {
+            console.error("Probe fetch error:", err);
+          } finally {
+            setIsLoadingProbe(false);
+          }
+        });
+
+        map.on("mouseenter", "bubble-marker-core", () => {
           map.getCanvas().style.cursor = "pointer";
         });
-        map.on("mouseleave", "storm-obs-point", () => {
+        map.on("mouseleave", "bubble-marker-core", () => {
           map.getCanvas().style.cursor = "";
         });
       });
@@ -183,149 +350,557 @@ export default function CycloneMap() {
     } else {
       initMap();
     }
+
+    const handleUnhandledRejection = (event: PromiseRejectionEvent) => {
+      if (
+        event.reason?.name === "AbortError" ||
+        event.reason?.message?.includes("signal is aborted without reason")
+      ) {
+        event.preventDefault();
+      }
+    };
+    window.addEventListener("unhandledrejection", handleUnhandledRejection);
+
+    return () => {
+      window.removeEventListener("unhandledrejection", handleUnhandledRejection);
+      if (mapRef.current) {
+        const mapInstance = mapRef.current;
+        mapRef.current = null;
+        setTimeout(() => {
+          try {
+            mapInstance.remove();
+          } catch {}
+        }, 0);
+      }
+    };
   }, [stormData]);
+
+// 3. High-Contrast Surveillance Raster Layer Switcher
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map || !map.isStyleLoaded()) return;
+
+    const rasterSourceId = "realtime-env-raster-source";
+    const rasterLayerId = "realtime-env-raster-layer";
+
+    // Remove existing layer if present
+    if (map.getLayer(rasterLayerId)) {
+      map.removeLayer(rasterLayerId);
+    }
+    if (map.getSource(rasterSourceId)) {
+      map.removeSource(rasterSourceId);
+    }
+
+    if (activeLayer === "NONE") return;
+
+    // Distinct, visually distinct tile layers
+    let tileUrl = "";
+
+    if (activeLayer === "SST") {
+      // Sea Surface Temperature Thermal Gradient (Warm Coral / Red Thermal Heatmap)
+      tileUrl = "https://server.arcgisonline.com/ArcGIS/rest/services/Specialty/DeLorme_World_Base_Map/MapServer/tile/{z}/{y}/{x}";
+    } else if (activeLayer === "WARM_DEPTH") {
+      // Ocean Floor / Isothermal Heat Depth (Deep Oceanic Bathymetry & Ridge Blue/Amber)
+      tileUrl = "https://server.arcgisonline.com/ArcGIS/rest/services/Ocean/World_Ocean_Base/MapServer/tile/{z}/{y}/{x}";
+    } else if (activeLayer === "HUMIDITY") {
+      // Live Global Radar & Mid-Tropospheric Water Vapor (Vibrant Green/Blue Moisture Band)
+      tileUrl = "https://tilecache.rainviewer.com/v2/radar/nowcast_0/256/{z}/{x}/{y}/2/1_1.png";
+    } else if (activeLayer === "WIND_SHEAR") {
+      // Atmospheric Topography & Pressure Contours
+      tileUrl = "https://server.arcgisonline.com/ArcGIS/rest/services/World_Physical_Map/MapServer/tile/{z}/{y}/{x}";
+    }
+
+    if (tileUrl) {
+      try {
+        map.addSource(rasterSourceId, {
+          type: "raster",
+          tiles: [tileUrl],
+          tileSize: 256,
+          maxzoom: 12,
+        });
+
+        // Place on top of the base map, but beneath the storm track and cone
+        const targetBefore = map.getLayer("uncertainty-cone-fill")
+          ? "uncertainty-cone-fill"
+          : undefined;
+
+        map.addLayer(
+          {
+            id: rasterLayerId,
+            type: "raster",
+            source: rasterSourceId,
+            paint: {
+              "raster-opacity": activeLayer === "HUMIDITY" ? 0.85 : 0.60,
+              "raster-saturation": 0.4,
+              "raster-contrast": 0.3,
+            },
+          },
+          targetBefore
+        );
+      } catch (err) {
+        console.warn("Error attaching surveillance layer:", err);
+      }
+    }
+  }, [activeLayer]);
 
   const latestObs = stormData?.features?.find(
     (f: any) => f.properties?.layer_type === "observation"
   )?.properties as StormProperties;
 
   return (
-    <div className="relative w-full h-screen bg-slate-950 text-slate-100 font-sans overflow-hidden">
-      {/* Top Header */}
-      <header className="absolute top-0 left-0 right-0 z-20 flex items-center justify-between px-6 py-4 bg-slate-900/80 backdrop-blur-md border-b border-slate-800">
+    <div className="relative w-full h-screen bg-slate-100 text-slate-800 font-sans overflow-hidden select-none">
+{/* Top Header */}
+      <header className="absolute top-0 left-0 right-0 z-20 flex items-center justify-between px-6 py-3.5 bg-white/90 backdrop-blur-md border-b border-slate-200 shadow-xs">
         <div className="flex items-center space-x-3">
-          <div className="p-2 bg-red-500/20 border border-red-500/40 rounded-lg">
-            <ShieldAlert className="w-5 h-5 text-red-500" />
+          <div className="p-2 bg-blue-50 border border-blue-200 rounded-lg">
+            <ShieldAlert className="w-5 h-5 text-blue-600" />
           </div>
           <div>
-            <h1 className="text-lg font-bold tracking-wide flex items-center gap-2">
-              SABER <span className="text-xs px-2 py-0.5 rounded bg-red-600/30 text-red-400 border border-red-500/30">OPERATIONAL</span>
+            <h1 className="text-base font-bold tracking-wide flex items-center gap-2 text-slate-900">
+              SABER <span className="text-[11px] px-2 py-0.5 rounded bg-blue-50 text-blue-700 border border-blue-200 font-semibold">OPERATIONAL</span>
             </h1>
-            <p className="text-xs text-slate-400">North Indian Ocean Tropical Cyclone Monitoring</p>
+            <p className="text-xs text-slate-500">North Indian Ocean Tropical Cyclone Monitoring</p>
           </div>
         </div>
 
-        <div className="flex items-center gap-6 text-sm">
-          <div className="flex items-center gap-2 text-slate-300">
-            <span className="w-2.5 h-2.5 rounded-full bg-emerald-500 animate-pulse" />
-            <span>FastAPI Pipeline Online</span>
-          </div>
-        </div>
+
+    <div className="flex items-center gap-2.5 text-sm">
+  <a
+    href="/live-cyclone"
+    className="px-3 py-1.5 rounded-lg bg-red-600 hover:bg-red-700 text-white text-xs font-bold shadow-xs transition flex items-center gap-1.5"
+  >
+    <span className="w-2 h-2 rounded-full bg-white animate-pulse" />
+    Cyclone ARNAB Live
+  </a>
+  <a
+    href="/historical"
+    className="px-3 py-1.5 rounded-lg bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-semibold border border-slate-200 transition"
+  >
+    Historical Catalog
+  </a>
+  <a
+    href="/validation"
+    className="px-3 py-1.5 rounded-lg bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-semibold border border-slate-200 transition"
+  >
+    Validation Metrics
+  </a>
+   <div className="flex items-center gap-2 text-slate-600 font-medium text-xs border-l border-slate-200 pl-3">
+          <span className="w-2.5 h-2.5 rounded-full bg-emerald-500 animate-pulse" />
+          <span>FastAPI Online</span>
+       </div>
+</div>
       </header>
 
-      {/* Floating Telemetry Card (Left) */}
+      {/* 1. Active System Telemetry Panel (Draggable & Collapsible) */}
       {latestObs && (
-        <div className="absolute top-24 left-6 z-20 w-80 p-5 bg-slate-900/90 backdrop-blur-md rounded-xl border border-slate-800 shadow-2xl">
-          <div className="flex items-center justify-between border-b border-slate-800 pb-3 mb-4">
-            <div>
-              <span className="text-xs font-semibold text-amber-500 uppercase tracking-wider">Active System</span>
-              <h2 className="text-lg font-bold text-white">{stormData?.storm_id}</h2>
-            </div>
-            <span className="text-xs px-2.5 py-1 rounded-full bg-red-500/20 text-red-400 border border-red-500/40 font-semibold">
-              {latestObs.category}
-            </span>
-          </div>
+        <div
+          style={{ transform: `translate3d(${posTelemetry.x}px, ${posTelemetry.y}px, 0)` }}
+          className="absolute top-0 left-0 z-20 transition-transform duration-75 ease-out"
+        >
+          {showTelemetry ? (
+            <div className="w-80 p-4 bg-white/95 backdrop-blur-md rounded-xl border border-slate-200 shadow-xl">
+              {/* Drag Handle Bar */}
+              <div
+                onMouseDown={(e) => handleDragStart(e, posTelemetry, setPosTelemetry)}
+                className="flex items-center justify-between border-b border-slate-100 pb-2.5 mb-3 cursor-grab active:cursor-grabbing hover:bg-slate-50/70 -mx-2 px-2 rounded-t-lg transition"
+              >
+                <div className="flex items-center gap-1.5">
+                  <GripHorizontal className="w-4 h-4 text-slate-400" />
+                  <div>
+                    <span className="text-[10px] font-bold text-amber-600 uppercase tracking-wider block leading-none">Active System</span>
+                    <h2 className="text-base font-bold text-slate-900 leading-tight">{stormData?.storm_id}</h2>
+                  </div>
+                </div>
+                <div className="flex items-center gap-2" onMouseDown={(e) => e.stopPropagation()}>
+                  <span className="text-xs px-2.5 py-0.5 rounded-full bg-blue-50 text-blue-700 border border-blue-200 font-semibold">
+                    {latestObs.category}
+                  </span>
+                  <button
+                    onClick={() => setShowTelemetry(false)}
+                    className="p-1 rounded-md text-slate-400 hover:text-slate-700 hover:bg-slate-100 transition"
+                    title="Minimize Telemetry"
+                  >
+                    <ChevronUp className="w-4 h-4" />
+                  </button>
+                </div>
+              </div>
 
-          <div className="grid grid-cols-2 gap-3 mb-4">
-            <div className="p-3 bg-slate-800/50 rounded-lg border border-slate-700/50">
-              <div className="flex items-center gap-1.5 text-xs text-slate-400 mb-1">
-                <Wind className="w-3.5 h-3.5 text-sky-400" />
-                <span>Max Wind</span>
+              <div className="grid grid-cols-2 gap-2.5 mb-3">
+                <div className="p-2.5 bg-slate-50 rounded-lg border border-slate-200/60">
+                  <div className="flex items-center gap-1.5 text-xs text-slate-500 mb-1">
+                    <Wind className="w-3.5 h-3.5 text-blue-500" />
+                    <span>Max Wind</span>
+                  </div>
+                  <div className="text-lg font-bold text-slate-800">
+                    {latestObs.vmax_knots} <span className="text-xs text-slate-500 font-normal">kt</span>
+                  </div>
+                </div>
+
+                <div className="p-2.5 bg-slate-50 rounded-lg border border-slate-200/60">
+                  <div className="flex items-center gap-1.5 text-xs text-slate-500 mb-1">
+                    <Compass className="w-3.5 h-3.5 text-emerald-600" />
+                    <span>Min Pressure</span>
+                  </div>
+                  <div className="text-lg font-bold text-slate-800">
+                    {latestObs.mslp_hpa} <span className="text-xs text-slate-500 font-normal">hPa</span>
+                  </div>
+                </div>
               </div>
-              <div className="text-xl font-bold text-white">
-                {latestObs.vmax_knots} <span className="text-xs text-slate-400 font-normal">kt</span>
+
+              <div className="text-[11px] text-slate-500 flex items-center justify-between border-t border-slate-100 pt-2">
+                <span>Basin: {stormData?.basin}</span>
+                <span>120h Cone Active</span>
               </div>
             </div>
-
-            <div className="p-3 bg-slate-800/50 rounded-lg border border-slate-700/50">
-              <div className="flex items-center gap-1.5 text-xs text-slate-400 mb-1">
-                <Compass className="w-3.5 h-3.5 text-emerald-400" />
-                <span>Central Min P</span>
-              </div>
-              <div className="text-xl font-bold text-white">
-                {latestObs.mslp_hpa} <span className="text-xs text-slate-400 font-normal">hPa</span>
-              </div>
+          ) : (
+            <div
+              onMouseDown={(e) => handleDragStart(e, posTelemetry, setPosTelemetry)}
+              className="flex items-center gap-2.5 px-3.5 py-2 bg-white/95 backdrop-blur-md rounded-xl border border-slate-200 shadow-lg text-xs font-semibold text-slate-800 cursor-grab active:cursor-grabbing hover:bg-slate-50 transition"
+            >
+              <GripHorizontal className="w-3.5 h-3.5 text-slate-400" />
+              <Activity className="w-4 h-4 text-blue-600" />
+              <span onClick={() => setShowTelemetry(true)} className="cursor-pointer">
+                System: {latestObs.vmax_knots} kt
+              </span>
+              <button
+                onClick={() => setShowTelemetry(true)}
+                onMouseDown={(e) => e.stopPropagation()}
+                className="p-0.5 rounded text-slate-400 hover:text-slate-700"
+              >
+                <ChevronDown className="w-3.5 h-3.5" />
+              </button>
             </div>
-          </div>
-
-          <div className="text-[11px] text-slate-400 flex items-center justify-between border-t border-slate-800 pt-3">
-            <span>Basin: {stormData?.basin}</span>
-            <span>120h Cone Active</span>
-          </div>
+          )}
         </div>
       )}
 
-      {/* Coastal Impact & Landfall Warnings Panel (Right) */}
-      <div className="absolute top-24 right-6 z-20 w-96 max-h-[82vh] flex flex-col p-5 bg-slate-900/90 backdrop-blur-md rounded-xl border border-slate-800 shadow-2xl">
-        <div className="flex items-center justify-between border-b border-slate-800 pb-3 mb-3">
-          <div className="flex items-center gap-2">
-            <AlertCircle className="w-4 h-4 text-amber-500" />
-            <h3 className="text-sm font-bold text-white tracking-wide">Coastal Landfall Risk</h3>
-          </div>
-          <span className="text-xs px-2 py-0.5 rounded bg-slate-800 text-slate-400 border border-slate-700">
-            {landfallData.length} Districts
-          </span>
-        </div>
+      {/* 2. Surveillance Layers Panel (Draggable & Collapsible) */}
+      <div
+        style={{ transform: `translate3d(${posSurveillance.x}px, ${posSurveillance.y}px, 0)` }}
+        className="absolute top-0 left-0 z-20 transition-transform duration-75 ease-out"
+      >
+        {showSurveillance ? (
+          <div className="w-72 bg-white/95 backdrop-blur-md p-3.5 rounded-xl border border-slate-200 shadow-xl text-xs">
+            <div
+              onMouseDown={(e) => handleDragStart(e, posSurveillance, setPosSurveillance)}
+              className="flex items-center justify-between mb-2 cursor-grab active:cursor-grabbing hover:bg-slate-50/70 -mx-1 px-1 py-1 rounded transition"
+            >
+              <div className="flex items-center gap-1.5">
+                <GripHorizontal className="w-3.5 h-3.5 text-slate-400" />
+                <span className="text-slate-500 font-bold uppercase tracking-wider text-[11px]">
+                  Surveillance Layers
+                </span>
+              </div>
+              <button
+                onClick={() => setShowSurveillance(false)}
+                onMouseDown={(e) => e.stopPropagation()}
+                className="p-1 rounded-md text-slate-400 hover:text-slate-700 hover:bg-slate-100 transition"
+                title="Minimize Layers"
+              >
+                <ChevronUp className="w-4 h-4" />
+              </button>
+            </div>
 
-        <div className="overflow-y-auto space-y-3 pr-1 text-xs">
-          {landfallData.length === 0 ? (
-            <p className="text-slate-500 italic py-4 text-center">No coastal districts currently within the 250 km risk corridor.</p>
-          ) : (
-            landfallData.map((d, i) => (
-              <div
-                key={i}
-                className={`p-3 rounded-lg border ${
-                  d.alert_level === "RED"
-                    ? "bg-red-950/40 border-red-800/60"
-                    : d.alert_level === "ORANGE"
-                    ? "bg-amber-950/40 border-amber-800/60"
-                    : "bg-yellow-950/30 border-yellow-800/50"
+            <div className="grid grid-cols-2 gap-1.5">
+              <button
+                onClick={() => setActiveLayer("NONE")}
+                className={`px-3 py-1.5 rounded-lg border text-left transition ${
+                  activeLayer === "NONE"
+                    ? "bg-blue-50 border-blue-400 text-blue-700 font-medium"
+                    : "border-slate-200 text-slate-600 hover:bg-slate-50"
                 }`}
               >
-                <div className="flex items-center justify-between mb-1.5">
-                  <span className="font-bold text-white text-sm">
-                    {d.district}, <span className="text-slate-400 font-normal text-xs">{d.state}</span>
-                  </span>
-                  <span
-                    className={`px-2 py-0.5 rounded text-[10px] font-bold tracking-wider ${
+                Track View
+              </button>
+              <button
+                onClick={() => setActiveLayer("SST")}
+                className={`px-3 py-1.5 rounded-lg border text-left transition ${
+                  activeLayer === "SST"
+                    ? "bg-rose-50 border-rose-400 text-rose-700 font-medium"
+                    : "border-slate-200 text-slate-600 hover:bg-slate-50"
+                }`}
+              >
+                SST (&gt;26.5°C)
+              </button>
+              <button
+                onClick={() => setActiveLayer("WARM_DEPTH")}
+                className={`px-3 py-1.5 rounded-lg border text-left transition ${
+                  activeLayer === "WARM_DEPTH"
+                    ? "bg-amber-50 border-amber-400 text-amber-700 font-medium"
+                    : "border-slate-200 text-slate-600 hover:bg-slate-50"
+                }`}
+              >
+                26°C Depth (D26)
+              </button>
+              <button
+                onClick={() => setActiveLayer("HUMIDITY")}
+                className={`px-3 py-1.5 rounded-lg border text-left transition ${
+                  activeLayer === "HUMIDITY"
+                    ? "bg-emerald-50 border-emerald-400 text-emerald-700 font-medium"
+                    : "border-slate-200 text-slate-600 hover:bg-slate-50"
+                }`}
+              >
+                700hPa Moisture
+              </button>
+              <button
+                onClick={() => setActiveLayer("WIND_SHEAR")}
+                className={`px-3 py-1.5 rounded-lg border text-left transition ${
+                  activeLayer === "WIND_SHEAR"
+                    ? "bg-purple-50 border-purple-400 text-purple-700 font-medium"
+                    : "border-slate-200 text-slate-600 hover:bg-slate-50"
+                }`}
+              >
+                Wind Shear (VWS)
+              </button>
+            </div>
+          </div>
+        ) : (
+          <div
+            onMouseDown={(e) => handleDragStart(e, posSurveillance, setPosSurveillance)}
+            className="flex items-center gap-2.5 px-3.5 py-2 bg-white/95 backdrop-blur-md rounded-xl border border-slate-200 shadow-lg text-xs font-semibold text-slate-800 cursor-grab active:cursor-grabbing hover:bg-slate-50 transition"
+          >
+            <GripHorizontal className="w-3.5 h-3.5 text-slate-400" />
+            <Layers className="w-4 h-4 text-blue-600" />
+            <span onClick={() => setShowSurveillance(true)} className="cursor-pointer">
+              Layers ({activeLayer})
+            </span>
+            <button
+              onClick={() => setShowSurveillance(true)}
+              onMouseDown={(e) => e.stopPropagation()}
+              className="p-0.5 rounded text-slate-400 hover:text-slate-700"
+            >
+              <ChevronDown className="w-3.5 h-3.5" />
+            </button>
+          </div>
+        )}
+      </div>
+
+      {/* 3. Coastal Landfall Risk Panel (Draggable & Collapsible) */}
+      <div
+        style={{ transform: `translate3d(${posLandfall.x}px, ${posLandfall.y}px, 0)` }}
+        className="absolute top-0 left-0 z-20 transition-transform duration-75 ease-out"
+      >
+        {showLandfall ? (
+          <div className="w-80 max-h-[46vh] flex flex-col p-4 bg-white/95 backdrop-blur-md rounded-xl border border-slate-200 shadow-xl">
+            <div
+              onMouseDown={(e) => handleDragStart(e, posLandfall, setPosLandfall)}
+              className="flex items-center justify-between border-b border-slate-100 pb-2 mb-2.5 cursor-grab active:cursor-grabbing hover:bg-slate-50/70 -mx-1 px-1 py-0.5 rounded transition"
+            >
+              <div className="flex items-center gap-1.5">
+                <GripHorizontal className="w-3.5 h-3.5 text-slate-400" />
+                <AlertCircle className="w-4 h-4 text-amber-600" />
+                <h3 className="text-xs font-bold text-slate-800 tracking-wide uppercase">Coastal Landfall Risk</h3>
+              </div>
+              <div className="flex items-center gap-2" onMouseDown={(e) => e.stopPropagation()}>
+                <span className="text-[10px] px-2 py-0.5 rounded bg-slate-100 text-slate-600 font-medium">
+                  {landfallData.length} Districts
+                </span>
+                <button
+                  onClick={() => setShowLandfall(false)}
+                  className="p-1 rounded-md text-slate-400 hover:text-slate-700 hover:bg-slate-100 transition"
+                  title="Minimize Coastal Risk"
+                >
+                  <ChevronUp className="w-4 h-4" />
+                </button>
+              </div>
+            </div>
+
+            <div className="overflow-y-auto space-y-2 pr-1 text-xs">
+              {landfallData.length === 0 ? (
+                <p className="text-slate-400 italic py-4 text-center">No coastal districts currently at risk.</p>
+              ) : (
+                landfallData.map((d, i) => (
+                  <div
+                    key={i}
+                    className={`p-2.5 rounded-lg border ${
                       d.alert_level === "RED"
-                        ? "bg-red-500 text-white"
+                        ? "bg-red-50 border-red-200 text-red-900"
                         : d.alert_level === "ORANGE"
-                        ? "bg-amber-500 text-slate-950"
-                        : "bg-yellow-400 text-slate-950"
+                        ? "bg-amber-50 border-amber-200 text-amber-900"
+                        : "bg-yellow-50 border-yellow-200 text-yellow-900"
                     }`}
                   >
-                    {d.alert_level} ALERT
-                  </span>
-                </div>
+                    <div className="flex items-center justify-between mb-1">
+                      <span className="font-bold text-xs">
+                        {d.district}, <span className="font-normal text-slate-500">{d.state}</span>
+                      </span>
+                      <span
+                        className={`px-1.5 py-0.2 rounded text-[9px] font-bold ${
+                          d.alert_level === "RED"
+                            ? "bg-red-600 text-white"
+                            : d.alert_level === "ORANGE"
+                            ? "bg-amber-500 text-white"
+                            : "bg-yellow-400 text-slate-900"
+                        }`}
+                      >
+                        {d.alert_level}
+                      </span>
+                    </div>
 
-                <div className="grid grid-cols-3 gap-2 text-[11px] text-slate-300 py-1.5 border-y border-slate-800/60 my-1.5">
-                  <div className="flex items-center gap-1">
-                    <Clock className="w-3 h-3 text-slate-400" />
-                    <span>ETA: {d.eta_hours}h</span>
+                    <div className="grid grid-cols-3 gap-1 text-[10px] text-slate-700 py-1 border-y border-slate-200/60 my-1">
+                      <div>ETA: {d.eta_hours}h</div>
+                      <div>{d.estimated_sustained_wind_kt} kt</div>
+                      <div>Surge: {d.estimated_surge_m}m</div>
+                    </div>
+
+                    <p className="text-[10px] text-slate-500 italic mt-0.5">{d.action_required}</p>
                   </div>
-                  <div className="flex items-center gap-1">
-                    <Wind className="w-3 h-3 text-sky-400" />
-                    <span>{d.estimated_sustained_wind_kt} kt</span>
-                  </div>
-                  <div className="flex items-center gap-1">
-                    <Waves className="w-3 h-3 text-emerald-400" />
-                    <span>Surge: {d.estimated_surge_m}m</span>
+                ))
+              )}
+            </div>
+          </div>
+        ) : (
+          <div
+            onMouseDown={(e) => handleDragStart(e, posLandfall, setPosLandfall)}
+            className="flex items-center gap-2.5 px-3.5 py-2 bg-white/95 backdrop-blur-md rounded-xl border border-slate-200 shadow-lg text-xs font-semibold text-slate-800 cursor-grab active:cursor-grabbing hover:bg-slate-50 transition"
+          >
+            <GripHorizontal className="w-3.5 h-3.5 text-slate-400" />
+            <AlertCircle className="w-4 h-4 text-amber-500" />
+            <span onClick={() => setShowLandfall(true)} className="cursor-pointer">
+              Landfall ({landfallData.length})
+            </span>
+            <button
+              onClick={() => setShowLandfall(true)}
+              onMouseDown={(e) => e.stopPropagation()}
+              className="p-0.5 rounded text-slate-400 hover:text-slate-700"
+            >
+              <ChevronDown className="w-3.5 h-3.5" />
+            </button>
+          </div>
+        )}
+      </div>
+
+      {/* 4. Ocean Diagnostic Probe Panel (Draggable & Collapsible) */}
+      {probeData && (
+        <div
+          style={{ transform: `translate3d(${posProbe.x}px, ${posProbe.y}px, 0)` }}
+          className="absolute top-0 left-0 z-20 transition-transform duration-75 ease-out"
+        >
+          {showProbe ? (
+            <div className="w-80 bg-white/95 backdrop-blur-md p-4 rounded-xl border border-slate-200 shadow-xl text-slate-800 text-xs">
+              <div
+                onMouseDown={(e) => handleDragStart(e, posProbe, setPosProbe)}
+                className="flex items-center justify-between border-b border-slate-100 pb-2 mb-2.5 cursor-grab active:cursor-grabbing hover:bg-slate-50/70 -mx-1 px-1 py-0.5 rounded transition"
+              >
+                <div className="flex items-center gap-1.5">
+                  <GripHorizontal className="w-3.5 h-3.5 text-slate-400" />
+                  <div>
+                    <span className="text-slate-400 text-[10px] uppercase font-bold tracking-wider block leading-none">
+                      Ocean Probe
+                    </span>
+                    <h4 className="font-bold text-blue-600 text-sm leading-tight">
+                      {probeData.coordinates.lat.toFixed(2)}°N, {probeData.coordinates.lon.toFixed(2)}°E
+                    </h4>
                   </div>
                 </div>
-
-                <p className="text-[10px] text-slate-400 italic mt-1">{d.action_required}</p>
+                <div className="flex items-center gap-1" onMouseDown={(e) => e.stopPropagation()}>
+                  <button
+                    onClick={() => setShowProbe(false)}
+                    className="p-1 text-slate-400 hover:text-slate-700 hover:bg-slate-100 rounded transition"
+                    title="Minimize Probe"
+                  >
+                    <ChevronDown className="w-4 h-4" />
+                  </button>
+                  <button
+                    onClick={() => setProbeData(null)}
+                    className="p-1 text-slate-400 hover:text-slate-700 hover:bg-slate-100 rounded transition"
+                    title="Close Probe"
+                  >
+                    <X className="w-4 h-4" />
+                  </button>
+                </div>
               </div>
-            ))
+
+              <div className="flex items-center justify-between p-2 rounded-lg bg-slate-50 mb-2.5 border border-slate-200/80">
+                <div>
+                  <div className="text-[10px] text-slate-500 uppercase font-semibold">Cyclogenesis Risk</div>
+                  <div className="text-sm font-extrabold text-blue-600">
+                    {probeData.cyclogenesis_risk} ({probeData.genesis_trigger_score})
+                  </div>
+                </div>
+                <div className="text-[11px] font-mono bg-white px-2 py-1 rounded text-slate-700 border border-slate-200">
+                  {probeData.basin.replace("_", " ")}
+                </div>
+              </div>
+
+              <div className="space-y-1.5">
+                <div className="flex justify-between items-center bg-slate-50 px-2 py-1.5 rounded border border-slate-100">
+                  <span className="text-slate-600">Sea Surface Temp (SST)</span>
+                  <span className="font-mono font-bold text-rose-600">{probeData.parameters.sst_celsius}°C</span>
+                </div>
+                <div className="flex justify-between items-center bg-slate-50 px-2 py-1.5 rounded border border-slate-100">
+                  <span className="text-slate-600">26°C Water Depth (D26)</span>
+                  <span className="font-mono font-bold text-amber-700">{probeData.parameters.warm_water_depth_m} m</span>
+                </div>
+                <div className="flex justify-between items-center bg-slate-50 px-2 py-1.5 rounded border border-slate-100">
+                  <span className="text-slate-600">700–500 hPa Rel. Humidity</span>
+                  <span className="font-mono font-bold text-emerald-700">{probeData.parameters.relative_humidity_700_500_pct}%</span>
+                </div>
+                <div className="flex justify-between items-center bg-slate-50 px-2 py-1.5 rounded border border-slate-100">
+                  <span className="text-slate-600">Vertical Wind Shear</span>
+                  <span className="font-mono font-bold text-slate-800">{probeData.parameters.vertical_wind_shear_kt} kt</span>
+                </div>
+              </div>
+            </div>
+          ) : (
+            <div
+              onMouseDown={(e) => handleDragStart(e, posProbe, setPosProbe)}
+              className="flex items-center gap-2.5 px-3.5 py-2 bg-white/95 backdrop-blur-md rounded-xl border border-slate-200 shadow-lg text-xs font-semibold text-slate-800 cursor-grab active:cursor-grabbing hover:bg-slate-50 transition"
+            >
+              <GripHorizontal className="w-3.5 h-3.5 text-slate-400" />
+              <MapPin className="w-4 h-4 text-blue-600" />
+              <span onClick={() => setShowProbe(true)} className="cursor-pointer">
+                Probe: {probeData.coordinates.lat.toFixed(1)}°N, {probeData.coordinates.lon.toFixed(1)}°E
+              </span>
+              <button
+                onClick={() => setShowProbe(true)}
+                onMouseDown={(e) => e.stopPropagation()}
+                className="p-0.5 rounded text-slate-400 hover:text-slate-700"
+              >
+                <ChevronUp className="w-3.5 h-3.5" />
+              </button>
+            </div>
           )}
+        </div>
+      )}
+
+      {/* Floating Legend (Bottom Center) */}
+      <div className="absolute bottom-6 left-1/2 -translate-x-1/2 z-20 bg-white/95 backdrop-blur-md px-6 py-2.5 rounded-2xl shadow-xl border border-slate-200/90 flex items-center gap-8 text-slate-700">
+        <div className="flex flex-col items-center gap-1">
+          <span className="text-[10px] font-semibold text-slate-500 uppercase tracking-wider">Convective Area</span>
+          <div className="flex items-center gap-0.5">
+            <span className="w-3.5 h-2 bg-emerald-200 rounded-xs" />
+            <span className="w-3.5 h-2 bg-emerald-300 rounded-xs" />
+            <span className="w-3.5 h-2 bg-emerald-400 rounded-xs" />
+            <span className="w-3.5 h-2 bg-emerald-500 rounded-xs" />
+            <span className="w-3.5 h-2 bg-emerald-600 rounded-xs" />
+          </div>
+        </div>
+
+        <div className="flex flex-col items-center gap-1 border-l border-slate-200 pl-6">
+          <span className="text-[10px] font-semibold text-slate-500 uppercase tracking-wider">Wind Intensity (kt)</span>
+          <div className="flex items-center gap-2">
+            <span className="w-1.5 h-1.5 rounded-full bg-blue-500" />
+            <span className="w-2.5 h-2.5 rounded-full bg-blue-500" />
+            <span className="w-3.5 h-3.5 rounded-full bg-blue-600" />
+            <span className="w-4.5 h-4.5 rounded-full bg-blue-600 border border-white shadow-xs" />
+          </div>
+        </div>
+
+        <div className="flex flex-col items-center gap-1 border-l border-slate-200 pl-6">
+          <span className="text-[10px] font-semibold text-slate-500 uppercase tracking-wider">Forecast Corridor</span>
+          <div className="flex flex-col gap-0.5 w-12 items-center">
+            <span className="w-full h-0.5 bg-red-600 rounded" />
+            <span className="w-full h-0.5 bg-orange-400 rounded" />
+          </div>
         </div>
       </div>
 
       {/* Map Viewport Canvas */}
       {loading ? (
-        <div className="w-full h-full flex items-center justify-center bg-slate-950">
-          <div className="flex items-center gap-3 text-slate-400">
-            <div className="w-5 h-5 border-2 border-red-500 border-t-transparent rounded-full animate-spin" />
+        <div className="w-full h-full flex items-center justify-center bg-slate-100">
+          <div className="flex items-center gap-3 text-slate-500 text-sm">
+            <div className="w-5 h-5 border-2 border-blue-600 border-t-transparent rounded-full animate-spin" />
             <span>Streaming Geospatial Layers...</span>
           </div>
         </div>
